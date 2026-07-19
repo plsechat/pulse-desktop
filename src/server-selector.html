@@ -46,6 +46,13 @@
       }
     });
 
+    // Surface a connection error passed in when a saved server was unreachable.
+    const initialError = new URLSearchParams(location.search).get('error');
+    if (initialError) {
+      errorEl.textContent = initialError;
+      errorEl.classList.add('visible');
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const url = input.value.trim();

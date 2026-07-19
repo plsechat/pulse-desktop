@@ -91,6 +91,35 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' };
   });
 
+  // If the saved server can't be reached, don't strand the user on a raw
+  // Chromium error page — fall back to the server selector with the reason.
+  win.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // -3 (ABORTED) fires on normal redirects/navigations; ignore it and
+      // any sub-frame failure.
+      if (!isMainFrame || errorCode === -3) return;
+
+      const serverUrl = store.get('serverUrl');
+      if (!serverUrl) return; // already on the selector
+
+      // Only react to the SERVER load failing, never the local selector file
+      // (guards against a reload loop).
+      try {
+        if (!validatedURL.startsWith(new URL(serverUrl).origin)) return;
+      } catch {
+        return;
+      }
+
+      console.warn(
+        `[load] server unreachable (${errorCode} ${errorDescription}) for ${validatedURL}; returning to selector`
+      );
+      win.loadFile(SERVER_SELECTOR_PATH, {
+        search: `error=${encodeURIComponent(`Couldn't reach ${serverUrl} — it may be offline.`)}`
+      });
+    }
+  );
+
   // Minimize to tray on close instead of quitting (opt-in)
   win.on('close', (event) => {
     if (isQuitting) return;
@@ -174,6 +203,22 @@ function setupIpcHandlers(): void {
   });
 }
 
+// Single-instance lock — a chat/voice client must not run twice (a second
+// window means a second WebSocket + voice connection to the same server).
+// The second launch hands focus to the existing window and exits.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // App lifecycle
 app.on('before-quit', () => {
   isQuitting = true;
@@ -183,6 +228,9 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
+  // A losing second instance already called app.quit() above; don't build UI.
+  if (!gotSingleInstanceLock) return;
+
   // Request macOS system-level mic/camera access BEFORE creating the window
   await requestMediaAccess();
 

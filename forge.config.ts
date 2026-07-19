@@ -68,6 +68,7 @@ const config: ForgeConfig = {
       authors: 'Pulse',
       description: 'Pulse Desktop',
       setupExe: 'Pulse-Setup.exe',
+      setupIcon: './assets/icon.ico',
     }),
     // macOS auto-update (Squirrel.Mac) consumes the darwin .zip; the win32
     // .zip is a portable, non-installer download.
