@@ -17,6 +17,14 @@ import { handleSquirrelStartup } from './lib/squirrel-events';
 // other startup work (single-instance lock, protocol registration).
 const isSquirrelStartup = handleSquirrelStartup();
 
+// GPU acceleration: force-enable the paths Chromium sometimes leaves off
+// on desktop GPUs (raster + zero-copy upload, and don't let a stale
+// driver blocklist entry silently drop the app to software compositing —
+// the symptom is whole-app sluggishness). Must run before app ready.
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -157,6 +165,10 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       autoplayPolicy: 'no-user-gesture-required',
+      // A voice/chat client must keep ticking while minimized to tray;
+      // throttled timers also make the window feel unresponsive right
+      // after restore.
+      backgroundThrottling: false,
     },
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   });
