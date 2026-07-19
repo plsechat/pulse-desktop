@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld('pulseDesktop', {
   // Unread count on the dock / taskbar
   setBadgeCount: (count: number) => ipcRenderer.invoke('badge:set', count),
 
+  // Window chrome: 'overlay' = frameless with floating window controls (the
+  // client must provide drag regions), 'native' = OS title bar.
+  getWindowChrome: () => ipcRenderer.invoke('chrome:get') as Promise<'overlay' | 'native'>,
+  setTitleBarOverlay: (overlay: { color?: string; symbolColor?: string }) =>
+    ipcRenderer.invoke('titlebar:set-overlay', overlay),
+
   // Launch Pulse automatically at system login
   getStartupEnabled: () => ipcRenderer.invoke('startup:get') as Promise<boolean>,
   setStartupEnabled: (enabled: boolean) => ipcRenderer.invoke('startup:set', enabled) as Promise<void>,

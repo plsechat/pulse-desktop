@@ -13,6 +13,8 @@ export interface WindowState {
 export interface Settings {
   serverUrl?: string;
   serverName?: string;
+  /** Reported by the server's /info — gates frameless window chrome. */
+  serverVersion?: string;
   minimizeToTray: boolean;
   windowState?: WindowState;
 }

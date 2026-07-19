@@ -20,6 +20,38 @@ const isSquirrelStartup = handleSquirrelStartup();
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+// Chrome style of the CURRENT window (set at creation; needs a window
+// rebuild to change, see navigateToServer).
+let windowIsFrameless = false;
+
+// Frameless chrome needs the web client to provide its own drag regions —
+// shipped with server 0.2.5. Older servers keep the native title bar so the
+// window stays movable (a frameless window with no drag region is stuck).
+const MIN_FRAMELESS_SERVER = [0, 2, 5] as const;
+
+function serverSupportsFrameless(version: string | undefined): boolean {
+  if (!version) return false;
+  const parts = version.split('.').map((n) => parseInt(n, 10));
+  if (parts.length < 3 || parts.some(Number.isNaN)) return false;
+  for (let i = 0; i < 3; i++) {
+    if (parts[i] > MIN_FRAMELESS_SERVER[i]) return true;
+    if (parts[i] < MIN_FRAMELESS_SERVER[i]) return false;
+  }
+  return true; // exactly the minimum
+}
+
+/**
+ * Frameless (overlay window controls) is Windows-only for now: macOS needs
+ * a layout rework first (traffic lights would cover the client's top-left
+ * home button), and Linux lacks reliable overlay support. The server
+ * selector is our own page (always drag-ready), so no-server also qualifies.
+ */
+function wantsFramelessChrome(): boolean {
+  if (process.platform !== 'win32') return false;
+  const serverUrl = store.get('serverUrl');
+  if (!serverUrl) return true;
+  return serverSupportsFrameless(store.get('serverVersion'));
+}
 
 function disconnectServer(): void {
   store.delete('serverUrl');
@@ -32,6 +64,33 @@ function disconnectServer(): void {
 // Deep link (pulse://) queued when it arrives before the window exists.
 let pendingDeepLink: string | null = null;
 
+/**
+ * Load a server page into the window, rebuilding the window first when the
+ * desired chrome (frameless vs native) changed — titleBarStyle is fixed at
+ * creation time. The tray is rebuilt too (its menu closes over the window).
+ */
+function navigateToServer(pageUrl: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (wantsFramelessChrome() !== windowIsFrameless) {
+    const old = mainWindow;
+    mainWindow = createWindow();
+    destroyTray();
+    createTray(mainWindow, store, disconnectServer);
+    // Destroy AFTER the new window exists so window-all-closed can't fire
+    // an app.quit in the gap. destroy() skips the close event, so the
+    // minimize-to-tray close handler doesn't swallow it.
+    old.destroy();
+    // createWindow already started loading the bare serverUrl; honor a more
+    // specific page (e.g. an invite deep link).
+    if (pageUrl !== store.get('serverUrl')) {
+      mainWindow.loadURL(pageUrl);
+    }
+  } else {
+    mainWindow.loadURL(pageUrl);
+  }
+}
+
 /** Handle a pulse:// deep link — switch to the server and open the invite. */
 function handleDeepLink(rawUrl: string): void {
   const parsed = parseDeepLink(rawUrl);
@@ -40,19 +99,35 @@ function handleDeepLink(rawUrl: string): void {
   store.set('serverUrl', parsed.serverUrl);
   const target = targetUrl(parsed);
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.loadURL(target);
-  } else {
-    // Cold start — the window doesn't exist yet; consume once it's built.
-    pendingDeepLink = target;
-  }
+  // Resolve the target server's version first (it gates window chrome);
+  // tolerate failure — unknown version just means native chrome.
+  void app
+    .whenReady()
+    .then(() =>
+      net.fetch(`${parsed.serverUrl}/info`, {
+        signal: AbortSignal.timeout(5000),
+      })
+    )
+    .then((r) => (r.ok ? (r.json() as Promise<{ version?: string }>) : null))
+    .catch(() => null)
+    .then((info) => {
+      store.set('serverVersion', info?.version ?? '');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+        navigateToServer(target);
+      } else {
+        // Cold start — the window doesn't exist yet; consume once built.
+        pendingDeepLink = target;
+      }
+    });
 }
 
 function createWindow(): BrowserWindow {
   const windowState = loadWindowState(store);
+  const frameless = wantsFramelessChrome();
+  windowIsFrameless = frameless;
 
   const win = new BrowserWindow({
     title: APP_NAME,
@@ -65,6 +140,18 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#313338',
     show: false,
     autoHideMenuBar: true,
+    // Frameless: no title bar strip — the client's top bar doubles as the
+    // drag region and the OS draws min/max/close floating over it. The 48px
+    // band matches the client's h-12 top bar; the client re-colors the
+    // controls to its theme via the titlebar:set-overlay IPC.
+    ...(frameless && {
+      titleBarStyle: 'hidden' as const,
+      titleBarOverlay: {
+        color: '#16161a',
+        symbolColor: '#a1a1aa',
+        height: 48,
+      },
+    }),
     webPreferences: {
       preload: PRELOAD_PATH,
       contextIsolation: true,
@@ -196,10 +283,9 @@ function setupIpcHandlers(): void {
 
       store.set('serverUrl', serverUrl);
       store.set('serverName', data.name ?? 'Pulse Server');
+      store.set('serverVersion', data.version ?? '');
 
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.loadURL(serverUrl);
-      }
+      navigateToServer(serverUrl);
 
       return { success: true, name: data.name, version: data.version };
     } catch (err) {
@@ -244,6 +330,29 @@ function setupIpcHandlers(): void {
   ipcMain.handle('badge:set', (_event, count: number) => {
     setUnreadBadge(mainWindow, count);
   });
+
+  // Window chrome — lets the client know it must provide drag regions, and
+  // lets it recolor the overlay window controls to match its theme.
+  ipcMain.handle('chrome:get', () =>
+    windowIsFrameless ? 'overlay' : 'native'
+  );
+  ipcMain.handle(
+    'titlebar:set-overlay',
+    (_event, overlay: { color?: string; symbolColor?: string }) => {
+      if (process.platform !== 'win32' || !windowIsFrameless) return;
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        mainWindow.setTitleBarOverlay({
+          ...(typeof overlay?.color === 'string' && { color: overlay.color }),
+          ...(typeof overlay?.symbolColor === 'string' && {
+            symbolColor: overlay.symbolColor,
+          }),
+        });
+      } catch (err) {
+        console.warn('[chrome] setTitleBarOverlay failed:', err);
+      }
+    }
+  );
 
   // Launch Pulse at system login
   ipcMain.handle('startup:get', () => app.getLoginItemSettings().openAtLogin);
