@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0). Leave empty to use package.json version."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            make_targets: --platform=darwin --arch=arm64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            make_targets: --platform=linux --arch=x64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            make_targets: --platform=win32 --arch=x64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Linux: install RPM tooling for MakerRpm
+      - name: Install Linux packaging deps
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      # macOS: install CMake for native audio modules
+      - name: Install CMake (macOS)
+        if: matrix.platform == 'darwin'
+        run: brew install cmake
+
+      # macOS: import code signing certificate (optional — required for
+      # Squirrel.Mac auto-update to apply on end-user machines)
+      - name: Import code signing certificate
+        if: matrix.platform == 'darwin' && env.APPLE_CERTIFICATE_BASE64 != ''
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_FILE=$(mktemp /tmp/cert.XXXXXX.p12)
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_FILE"
+          KEYCHAIN=build.keychain
+          security create-keychain -p "" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          security import "$CERT_FILE" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          rm "$CERT_FILE"
+
+      - name: Install dependencies
+        run: bun install
+
+      # macOS: build native CoreAudio modules
+      - name: Build native modules (macOS)
+        if: matrix.platform == 'darwin'
+        run: bun run build:native
+
+      - name: Build desktop app
+        run: bun run build
+
+      - name: Package with Electron Forge
+        env:
+          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bun run forge -- make ${{ matrix.make_targets }}
+
+      # macOS: patch Info.plist for media permissions
+      - name: Patch macOS bundle
+        if: matrix.platform == 'darwin'
+        run: bash scripts/patch-macos.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          # RELEASES + *.nupkg drive the Squirrel.Windows auto-update feed;
+          # the darwin .zip drives Squirrel.Mac. All are required by
+          # update.electronjs.org.
+          path: |
+            out/make/**/*.dmg
+            out/make/**/*.zip
+            out/make/**/*.deb
+            out/make/**/*.rpm
+            out/make/**/*.exe
+            out/make/**/*.nupkg
+            out/make/**/RELEASES
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(jq -r .version package.json)
+          fi
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=Pulse Desktop v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: List artifacts
+        run: find artifacts -type f | head -50
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          draft: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.exe
+            artifacts/**/*.nupkg
+            artifacts/**/RELEASES
+          body: |
+            ## Pulse Desktop
+
+            Native Electron wrapper for the Pulse chat client. Point it at any
+            Pulse server and it loads that server's web client.
+
+            ### Downloads
+            | Platform | File |
+            |----------|------|
+            | macOS (Apple Silicon) | `.dmg` (or `.zip`) |
+            | Windows | `Pulse-Setup.exe` |
+            | Linux (Debian/Ubuntu) | `.deb` |
+            | Linux (Fedora/RHEL) | `.rpm` |
+
+            ### Auto-update
+            macOS and Windows builds self-update from this repo's releases via
+            update.electronjs.org. **Publish this release (un-draft it)** to make
+            it available to installed clients. macOS auto-update only applies to
+            code-signed builds. Linux updates through your distro's package
+            manager.

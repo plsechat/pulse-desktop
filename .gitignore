@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Native build artifacts
+native/audio-driver/build/
+native/coreaudio-addon/build/
+native/coreaudio-addon/node_modules/
+
+# Electron Forge
+.webpack/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
