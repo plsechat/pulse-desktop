@@ -8,6 +8,8 @@ import { APP_NAME, PRELOAD_PATH, SERVER_SELECTOR_PATH } from './lib/constants';
 import { getDriverStatus, installDriver, uninstallDriver } from './lib/audio-driver';
 import { canCaptureSystemAudio, startSystemAudioCapture, stopSystemAudioCapture } from './lib/audio-capture';
 import { initAutoUpdates } from './lib/updater';
+import { setUnreadBadge } from './lib/badge';
+import { parseDeepLink, targetUrl, DEEP_LINK_SCHEME } from './lib/deep-link';
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
@@ -18,6 +20,28 @@ function disconnectServer(): void {
   store.delete('serverName');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.loadFile(SERVER_SELECTOR_PATH);
+  }
+}
+
+// Deep link (pulse://) queued when it arrives before the window exists.
+let pendingDeepLink: string | null = null;
+
+/** Handle a pulse:// deep link — switch to the server and open the invite. */
+function handleDeepLink(rawUrl: string): void {
+  const parsed = parseDeepLink(rawUrl);
+  if (!parsed) return;
+
+  store.set('serverUrl', parsed.serverUrl);
+  const target = targetUrl(parsed);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.loadURL(target);
+  } else {
+    // Cold start — the window doesn't exist yet; consume once it's built.
+    pendingDeepLink = target;
   }
 }
 
@@ -56,8 +80,8 @@ function createWindow(): BrowserWindow {
   // Track window state changes
   trackWindowState(win, store);
 
-  // Setup media permissions
-  setupPermissions(win.webContents.session);
+  // Setup media permissions (also installs the Windows screen-share picker)
+  setupPermissions(win);
 
   // Handle external links — open in default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -153,9 +177,11 @@ function setupIpcHandlers(): void {
     // Remove trailing slash
     serverUrl = serverUrl.replace(/\/+$/, '');
 
-    // Validate by fetching /info
+    // Validate by fetching /info (bounded so the button can't hang forever)
     try {
-      const response = await net.fetch(`${serverUrl}/info`);
+      const response = await net.fetch(`${serverUrl}/info`, {
+        signal: AbortSignal.timeout(10000)
+      });
       if (!response.ok) {
         return { success: false, error: `Server returned ${response.status}` };
       }
@@ -171,6 +197,12 @@ function setupIpcHandlers(): void {
 
       return { success: true, name: data.name, version: data.version };
     } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.name === 'TimeoutError' || err.name === 'AbortError')
+      ) {
+        return { success: false, error: 'Server did not respond (timed out)' };
+      }
       const message = err instanceof Error ? err.message : 'Connection failed';
       return { success: false, error: message };
     }
@@ -201,6 +233,17 @@ function setupIpcHandlers(): void {
   ipcMain.handle('audio-capture:stop', () => {
     stopSystemAudioCapture();
   });
+
+  // Unread count on the dock / taskbar
+  ipcMain.handle('badge:set', (_event, count: number) => {
+    setUnreadBadge(mainWindow, count);
+  });
+
+  // Launch Pulse at system login
+  ipcMain.handle('startup:get', () => app.getLoginItemSettings().openAtLogin);
+  ipcMain.handle('startup:set', (_event, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: !!enabled });
+  });
 }
 
 // Single-instance lock — a chat/voice client must not run twice (a second
@@ -211,13 +254,28 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
+  // Windows/Linux deliver a pulse:// deep link as an argv entry on re-launch.
+  const link = argv.find((a) => a.startsWith(`${DEEP_LINK_SCHEME}://`));
+  if (link) {
+    handleDeepLink(link);
+    return;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
   }
 });
+
+// macOS delivers deep links via open-url (can fire before the app is ready).
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
+
+// Register pulse:// so the OS routes those links to this app.
+app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
 
 // App lifecycle
 app.on('before-quit', () => {
@@ -260,6 +318,18 @@ app.whenReady().then(async () => {
 
   // Self-update (packaged mac/win only; no-ops in dev and on Linux)
   initAutoUpdates();
+
+  // Consume a cold-start deep link: Windows/Linux pass it in argv; macOS may
+  // have queued it via open-url before the window existed.
+  const argvLink = process.argv.find((a) =>
+    a.startsWith(`${DEEP_LINK_SCHEME}://`)
+  );
+  if (argvLink) {
+    handleDeepLink(argvLink);
+  } else if (pendingDeepLink && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.loadURL(pendingDeepLink);
+    pendingDeepLink = null;
+  }
 
   app.on('activate', () => {
     // macOS: re-create window when dock icon clicked

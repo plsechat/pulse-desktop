@@ -37,6 +37,13 @@ const config: ForgeConfig = {
       NSMicrophoneUsageDescription: 'Pulse needs microphone access for voice chat.',
       NSCameraUsageDescription: 'Pulse needs camera access for video calls.',
       NSScreenCaptureUsageDescription: 'Pulse needs screen capture access for screen sharing.',
+      // Register the pulse:// deep-link scheme on macOS.
+      CFBundleURLTypes: [
+        {
+          CFBundleURLName: 'Pulse',
+          CFBundleURLSchemes: ['pulse'],
+        },
+      ],
     },
     // macOS code signing (requires APPLE_IDENTITY env var)
     ...(process.env.APPLE_IDENTITY && {

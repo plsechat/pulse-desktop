@@ -4,7 +4,11 @@ const path = require('path');
 const src = path.join(__dirname, '..', 'src');
 const dist = path.join(__dirname, '..', 'dist');
 
-const assets = ['server-selector.html', 'server-selector.css'];
+const assets = [
+  'server-selector.html',
+  'server-selector.css',
+  'screen-picker.html'
+];
 
 for (const file of assets) {
   fs.copyFileSync(path.join(src, file), path.join(dist, file));

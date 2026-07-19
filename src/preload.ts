@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld('pulseDesktop', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSetting: (key: string, value: unknown) => ipcRenderer.invoke('update-setting', key, value),
 
+  // Unread count on the dock / taskbar
+  setBadgeCount: (count: number) => ipcRenderer.invoke('badge:set', count),
+
+  // Launch Pulse automatically at system login
+  getStartupEnabled: () => ipcRenderer.invoke('startup:get') as Promise<boolean>,
+  setStartupEnabled: (enabled: boolean) => ipcRenderer.invoke('startup:set', enabled) as Promise<void>,
+
   // macOS audio driver management
   audioDriver: {
     getStatus: () => ipcRenderer.invoke('audio-driver:status') as Promise<{ supported: boolean; fileInstalled: boolean; active: boolean }>,

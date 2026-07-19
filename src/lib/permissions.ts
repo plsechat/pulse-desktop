@@ -1,5 +1,6 @@
 import { desktopCapturer, systemPreferences, dialog, shell } from 'electron';
-import type { Session } from 'electron';
+import type { BrowserWindow } from 'electron';
+import { pickScreenSource } from './screen-picker';
 
 /** Request macOS system-level mic/camera/screen access. */
 export async function requestMediaAccess(): Promise<void> {
@@ -56,7 +57,9 @@ export async function requestMediaAccess(): Promise<void> {
   }
 }
 
-export function setupPermissions(session: Session): void {
+export function setupPermissions(win: BrowserWindow): void {
+  const session = win.webContents.session;
+
   // Grant all permission requests from the loaded Pulse server.
   // Electron's default without a handler is to auto-approve, but we set one
   // explicitly to ensure media, display-capture, etc. are always granted.
@@ -83,10 +86,16 @@ export function setupPermissions(session: Session): void {
   // hardware-accelerated quality. The legacy desktopCapturer path ignores getDisplayMedia
   // constraints (resolution, frameRate) and throttles bitrate via software encoding.
   if (process.platform === 'win32') {
+    // Windows has no loopback-audio-capable OS picker, so show our own and
+    // forward the chosen source with system (loopback) audio.
     session.setDisplayMediaRequestHandler(async (_request, callback) => {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      if (sources.length > 0) {
-        callback({ video: sources[0], audio: 'loopback' } as { video: Electron.DesktopCapturerSource });
+      const source = await pickScreenSource(win);
+      if (source) {
+        callback({ video: source, audio: 'loopback' } as { video: Electron.DesktopCapturerSource });
+      } else {
+        // Cancelled — deny so the renderer's getDisplayMedia rejects cleanly
+        // instead of hanging forever.
+        callback({} as { video: Electron.DesktopCapturerSource });
       }
     });
   } else {
