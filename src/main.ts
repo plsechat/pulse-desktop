@@ -10,6 +10,12 @@ import { canCaptureSystemAudio, startSystemAudioCapture, stopSystemAudioCapture 
 import { initAutoUpdates } from './lib/updater';
 import { setUnreadBadge } from './lib/badge';
 import { parseDeepLink, targetUrl, DEEP_LINK_SCHEME } from './lib/deep-link';
+import { handleSquirrelStartup } from './lib/squirrel-events';
+
+// Squirrel.Windows install/update/uninstall launches — create/remove
+// shortcuts and exit instead of starting the real app. MUST run before any
+// other startup work (single-instance lock, protocol registration).
+const isSquirrelStartup = handleSquirrelStartup();
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
@@ -248,8 +254,11 @@ function setupIpcHandlers(): void {
 
 // Single-instance lock — a chat/voice client must not run twice (a second
 // window means a second WebSocket + voice connection to the same server).
-// The second launch hands focus to the existing window and exits.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// The second launch hands focus to the existing window and exits. Skipped
+// during Squirrel events so the install-time run doesn't hold the lock
+// against the real post-install (--squirrel-firstrun) launch.
+const gotSingleInstanceLock =
+  isSquirrelStartup || app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 }
@@ -274,8 +283,12 @@ app.on('open-url', (event, url) => {
   handleDeepLink(url);
 });
 
-// Register pulse:// so the OS routes those links to this app.
-app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+// Register pulse:// so the OS routes those links to this app. Re-running on
+// every launch keeps the registration pointing at the current exe across
+// Squirrel updates (the versioned app-<version> path changes each release).
+if (!isSquirrelStartup) {
+  app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+}
 
 // App lifecycle
 app.on('before-quit', () => {
@@ -286,8 +299,8 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
-  // A losing second instance already called app.quit() above; don't build UI.
-  if (!gotSingleInstanceLock) return;
+  // Squirrel event runs and losing second instances quit — don't build UI.
+  if (isSquirrelStartup || !gotSingleInstanceLock) return;
 
   // Request macOS system-level mic/camera access BEFORE creating the window
   await requestMediaAccess();
