@@ -85,24 +85,32 @@ export function setupPermissions(win: BrowserWindow): void {
   });
 
   // Required for getDisplayMedia() — screen sharing in voice channels.
-  // On Windows: use the legacy callback path so we can enable loopback audio capture.
-  // On macOS/Linux: use the native OS picker (ScreenCaptureKit on macOS) for full
-  // hardware-accelerated quality. The legacy desktopCapturer path ignores getDisplayMedia
-  // constraints (resolution, frameRate) and throttles bitrate via software encoding.
-  if (process.platform === 'win32') {
-    // Windows has no loopback-audio-capable OS picker, so show our own and
-    // forward the chosen source with system (loopback) audio.
-    session.setDisplayMediaRequestHandler(async (_request, callback) => {
+  //
+  // A handler MUST be registered on every platform: with a null handler
+  // Electron's JS layer skips the `useSystemPicker` wrapper entirely (see
+  // lib/browser/api/session.ts) and getDisplayMedia rejects "Not supported".
+  //
+  // macOS: ask for the native OS picker (SCContentSharingPicker, macOS 15+).
+  // When it is available Electron never invokes our handler; otherwise the
+  // in-app picker below is the fallback. System audio on macOS comes from
+  // the Pulse virtual audio device (the client swaps it in), not from here.
+  // Windows: no loopback-capable OS picker exists, so always show our own
+  // and forward the chosen source with system (loopback) audio.
+  // Linux: in-app picker, video only.
+  session.setDisplayMediaRequestHandler(
+    async (_request, callback) => {
       const source = await pickScreenSource(win);
       if (source) {
-        callback({ video: source, audio: 'loopback' } as { video: Electron.DesktopCapturerSource });
+        callback({
+          video: source,
+          ...(process.platform === 'win32' && { audio: 'loopback' as const }),
+        });
       } else {
         // Cancelled — deny so the renderer's getDisplayMedia rejects cleanly
         // instead of hanging forever.
         callback({} as { video: Electron.DesktopCapturerSource });
       }
-    });
-  } else {
-    session.setDisplayMediaRequestHandler(null, { useSystemPicker: true });
-  }
+    },
+    { useSystemPicker: process.platform === 'darwin' }
+  );
 }
