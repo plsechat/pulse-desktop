@@ -17,6 +17,13 @@ export interface Settings {
   serverVersion?: string;
   minimizeToTray: boolean;
   windowState?: WindowState;
+  /**
+   * The "grant Screen Recording in System Settings" guidance was already
+   * shown once. macOS only lets us trigger the system prompt, not re-ask,
+   * so nagging on every launch is pointless — the Settings pane is where
+   * the user grants it.
+   */
+  screenPermissionGuidanceShown?: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {

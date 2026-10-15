@@ -5,12 +5,38 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { existsSync } from 'fs';
+import { execFileSync } from 'child_process';
+import path from 'path';
 
 // macOS audio driver + helper — only include if built
 const hasNativeDriver = existsSync('./native/audio-driver/build/PulseAudio.driver');
 const hasAudioHelper = existsSync('./native/audio-driver/build/pulse-audio-helper');
 
 const config: ForgeConfig = {
+  hooks: {
+    // Ad-hoc sign the packaged macOS bundle when no signing identity is
+    // configured. This must happen here, between package and make: the
+    // ZIP/DMG makers archive out/<name>/Pulse.app, so anything signed
+    // after `make` never reaches the artifacts users download. An
+    // unsigned Electron bundle fails `codesign --verify` ("code has no
+    // resources but signature indicates they must be present"), which
+    // makes macOS re-prompt for mic/camera/screen access on every launch.
+    // With APPLE_IDENTITY set, osxSign handles signing and this is a no-op.
+    postPackage: async (_config, { platform, outputPaths }) => {
+      if (platform !== 'darwin' || process.env.APPLE_IDENTITY) return;
+      for (const dir of outputPaths) {
+        const appPath = path.join(dir, 'Pulse.app');
+        if (!existsSync(appPath)) continue;
+        console.log(`[forge] ad-hoc signing ${appPath}`);
+        execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
+          stdio: 'inherit',
+        });
+        execFileSync('codesign', ['--verify', '--deep', '--strict', appPath], {
+          stdio: 'inherit',
+        });
+      }
+    },
+  },
   packagerConfig: {
     asar: {
       unpack: '**/*.node', // Native addons must be outside asar

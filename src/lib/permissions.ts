@@ -1,9 +1,10 @@
 import { desktopCapturer, systemPreferences, dialog, shell } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { pickScreenSource } from './screen-picker';
+import type { Store } from './store';
 
 /** Request macOS system-level mic/camera/screen access. */
-export async function requestMediaAccess(): Promise<void> {
+export async function requestMediaAccess(store: Store): Promise<void> {
   if (process.platform !== 'darwin') return;
 
   // Mic + Camera — check status first, only prompt if not already granted
@@ -38,8 +39,11 @@ export async function requestMediaAccess(): Promise<void> {
     const updatedStatus = systemPreferences.getMediaAccessStatus('screen');
     console.log(`[permissions] screen recording (after trigger): ${updatedStatus}`);
 
-    if (updatedStatus !== 'granted') {
-      // Show a dialog guiding the user to System Settings
+    // Guide the user to System Settings — but only once. The OS prompt
+    // above is one-shot; after that only the Settings pane can grant it,
+    // and the client's screen-share button surfaces the failure in context.
+    if (updatedStatus !== 'granted' && !store.get('screenPermissionGuidanceShown')) {
+      store.set('screenPermissionGuidanceShown', true);
       const { response } = await dialog.showMessageBox({
         type: 'warning',
         title: 'Screen Recording Permission Required',

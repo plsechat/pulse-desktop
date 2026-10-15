@@ -424,7 +424,7 @@ app.whenReady().then(async () => {
   if (isSquirrelStartup || !gotSingleInstanceLock) return;
 
   // Request macOS system-level mic/camera access BEFORE creating the window
-  await requestMediaAccess();
+  await requestMediaAccess(store);
 
   // Application menu (ensures Cmd+Q works on macOS)
   const template: Electron.MenuItemConstructorOptions[] = [

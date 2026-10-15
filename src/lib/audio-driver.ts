@@ -113,9 +113,17 @@ export async function uninstallDriver(): Promise<{ success: boolean; error?: str
   }
 }
 
-/** Get the full driver status */
+/**
+ * Get the full driver status.
+ *
+ * `supported` means this build can actually capture system audio: macOS AND
+ * the pulse-audio-helper binary shipped in app resources. Without the
+ * helper, nothing can detect or drive the virtual device, so installing the
+ * driver would be pointless — report unsupported so the client never prompts
+ * for an install it can't use.
+ */
 export function getDriverStatus(): { supported: boolean; fileInstalled: boolean; active: boolean } {
-  const supported = process.platform === 'darwin';
+  const supported = process.platform === 'darwin' && getHelperPath() !== '';
   return {
     supported,
     fileInstalled: supported ? isDriverFileInstalled() : false,

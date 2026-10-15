@@ -41,6 +41,8 @@ Makers: DMG + ZIP (macOS), Squirrel installer + ZIP (Windows), deb + rpm (Linux)
 
 Set `APPLE_IDENTITY` (signing), and `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID` (notarization) to enable them in [`forge.config.ts`](forge.config.ts). Signing is **required** for macOS auto-update to apply.
 
+Without `APPLE_IDENTITY`, a `postPackage` hook ad-hoc signs the bundle before the ZIP/DMG makers run, so the downloadable artifacts always carry a valid (if untrusted) signature. macOS keys mic/camera/screen permission grants to the code signature; an unsigned bundle is re-prompted on every launch.
+
 ## Auto-update
 
 Packaged macOS and Windows builds self-update from this repo's GitHub Releases via the free [update.electronjs.org](https://github.com/electron/update.electronjs.org) service (see [`src/lib/updater.ts`](src/lib/updater.ts)). The repo slug lives in [`src/lib/constants.ts`](src/lib/constants.ts) as `UPDATE_REPO`.
