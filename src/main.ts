@@ -24,6 +24,12 @@ const isSquirrelStartup = handleSquirrelStartup();
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+// Linux/Wayland: screen capture goes through the xdg-desktop-portal +
+// PipeWire. Chromium ships this on by default, but spelling it out keeps
+// it on across Electron upgrades (it was flag-gated for years).
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+}
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;

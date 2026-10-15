@@ -43,6 +43,14 @@ Set `APPLE_IDENTITY` (signing), and `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_
 
 Without `APPLE_IDENTITY`, a `postPackage` hook ad-hoc signs the bundle before the ZIP/DMG makers run, so the downloadable artifacts always carry a valid (if untrusted) signature. macOS keys mic/camera/screen permission grants to the code signature; an unsigned bundle is re-prompted on every launch.
 
+## Linux notes
+
+- **Install**: `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL) from the release page; the binary is `pulse-desktop`.
+- **Screen share**: X11 shows Pulse's own source picker. Wayland uses the compositor's portal picker (`xdg-desktop-portal` + PipeWire must be present, which GNOME and KDE ship). No system audio on Linux — Chromium has no loopback capture there.
+- **Tray**: needs a status-notifier host. KDE and most desktops have one; stock GNOME needs the *AppIndicator* extension. Without a tray, a window hidden by *minimize to tray* comes back by launching Pulse again (the single-instance lock refocuses the running window).
+- **Deep links**: `pulse://` is registered through the package's `.desktop` entry (`x-scheme-handler/pulse`).
+- **Updates**: through the package manager; the in-app updater is macOS/Windows only.
+
 ## Auto-update
 
 Packaged macOS and Windows builds self-update from this repo's GitHub Releases via the free [update.electronjs.org](https://github.com/electron/update.electronjs.org) service (see [`src/lib/updater.ts`](src/lib/updater.ts)). The repo slug lives in [`src/lib/constants.ts`](src/lib/constants.ts) as `UPDATE_REPO`.

@@ -1,7 +1,33 @@
 import { desktopCapturer, systemPreferences, dialog, shell } from 'electron';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, DesktopCapturerSource } from 'electron';
 import { pickScreenSource } from './screen-picker';
 import type { Store } from './store';
+
+/**
+ * Wayland has no window/screen enumeration: desktopCapturer.getSources()
+ * itself raises the compositor's portal picker and returns just the source
+ * the user chose there. Showing our own picker on top would make them pick
+ * twice, so on Wayland we take the portal's answer as-is.
+ */
+function isWaylandSession(): boolean {
+  return (
+    process.platform === 'linux' &&
+    (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY)
+  );
+}
+
+async function pickViaPortal(): Promise<DesktopCapturerSource | null> {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+    return sources[0] ?? null; // empty = user cancelled the portal dialog
+  } catch (err) {
+    console.warn('[permissions] portal capture failed:', err);
+    return null;
+  }
+}
 
 /** Request macOS system-level mic/camera/screen access. */
 export async function requestMediaAccess(store: Store): Promise<void> {
@@ -96,10 +122,13 @@ export function setupPermissions(win: BrowserWindow): void {
   // the Pulse virtual audio device (the client swaps it in), not from here.
   // Windows: no loopback-capable OS picker exists, so always show our own
   // and forward the chosen source with system (loopback) audio.
-  // Linux: in-app picker, video only.
+  // Linux: in-app picker on X11; on Wayland the portal IS the picker.
+  // Video only (Chromium has no system-audio loopback on Linux).
   session.setDisplayMediaRequestHandler(
     async (_request, callback) => {
-      const source = await pickScreenSource(win);
+      const source = isWaylandSession()
+        ? await pickViaPortal()
+        : await pickScreenSource(win);
       if (source) {
         callback({
           video: source,

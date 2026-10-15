@@ -113,6 +113,9 @@ const config: ForgeConfig = {
         productName: 'Pulse',
         icon: './assets/icon.png',
         categories: ['Network', 'Chat'],
+        // pulse:// deep links. On Linux setAsDefaultProtocolClient only
+        // works when the installed .desktop entry declares the scheme.
+        mimeType: ['x-scheme-handler/pulse'],
       },
     }),
     new MakerRpm({
@@ -122,6 +125,9 @@ const config: ForgeConfig = {
         productName: 'Pulse',
         icon: './assets/icon.png',
         categories: ['Network', 'Chat'],
+        // pulse:// deep links. On Linux setAsDefaultProtocolClient only
+        // works when the installed .desktop entry declares the scheme.
+        mimeType: ['x-scheme-handler/pulse'],
       },
     }),
   ],
